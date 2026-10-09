@@ -1,0 +1,95 @@
+{
+  "basin": "esil",
+  "years": [
+    2001,
+    2024
+  ],
+  "spearman_rho": 0.76,
+  "p_value": 0.0,
+  "top3_flood_years": [
+    2014,
+    2015,
+    2017
+  ],
+  "their_index_rank": {
+    "2014": 8,
+    "2015": 12,
+    "2017": 5
+  },
+  "n_years": 24,
+  "index_rank_2024": 3,
+  "districts_2024": [
+    {
+      "district": "Атбасарский р-н",
+      "score": 1.47,
+      "category": "высокий",
+      "combination_2024_like": true
+    },
+    {
+      "district": "Есильский р-н",
+      "score": 1.44,
+      "category": "высокий",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Жаксынский р-н",
+      "score": 1.31,
+      "category": "высокий",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Астраханский р-н",
+      "score": 1.06,
+      "category": "высокий",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Есильский р-н",
+      "score": 0.63,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Целиноградский р-н",
+      "score": 0.61,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Жамбылский р-н",
+      "score": 0.56,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Мамлютский р-н",
+      "score": 0.55,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Кызылжарский р-н",
+      "score": 0.54,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "Аршалынский р-н",
+      "score": 0.54,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "г. Петропавловск",
+      "score": 0.51,
+      "category": "умеренный",
+      "combination_2024_like": false
+    },
+    {
+      "district": "г. Астана",
+      "score": 0.49,
+      "category": "умеренный",
+      "combination_2024_like": false
+    }
+  ]
+}

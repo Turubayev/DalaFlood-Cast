@@ -1,0 +1,74 @@
+{
+  "gauge": "esil_petropavl",
+  "target": "реанализ GloFAS v4",
+  "glofas_cell": [
+    54.96,
+    69.05
+  ],
+  "test_from": "2021-01-01",
+  "hbv": {
+    "kge_calibration": 0.857,
+    "nse_test": 0.231,
+    "kge_test": 0.378
+  },
+  "lstm": {
+    "day1": {
+      "nse": 0.974,
+      "coverage_80": 0.765
+    },
+    "day2": {
+      "nse": 0.933,
+      "coverage_80": 0.741
+    },
+    "day3": {
+      "nse": 0.852,
+      "coverage_80": 0.735
+    }
+  },
+  "persistence": {
+    "day1": {
+      "nse": 0.968
+    },
+    "day2": {
+      "nse": 0.902
+    },
+    "day3": {
+      "nse": 0.81
+    }
+  },
+  "peaks_day3": [
+    {
+      "year": 2021,
+      "peak_obs": 362.1,
+      "peak_sim": 373.5,
+      "peak_err_pct": 3.2,
+      "timing_err_days": 2
+    },
+    {
+      "year": 2022,
+      "peak_obs": 101.1,
+      "peak_sim": 94.30000305175781,
+      "peak_err_pct": -6.7,
+      "timing_err_days": 3
+    },
+    {
+      "year": 2023,
+      "peak_obs": 144.9,
+      "peak_sim": 131.10000610351562,
+      "peak_err_pct": -9.5,
+      "timing_err_days": 3
+    },
+    {
+      "year": 2024,
+      "peak_obs": 1781.4,
+      "peak_sim": 1572.800048828125,
+      "peak_err_pct": -11.7,
+      "timing_err_days": 3
+    }
+  ],
+  "rating_curve": [
+    0.0,
+    0.25,
+    0.5
+  ]
+}

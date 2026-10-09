@@ -1,0 +1,23 @@
+{
+  "area_km2_prob_gt_0.1": 36.79,
+  "area_km2_prob_gt_0.5": 34.82,
+  "area_km2_prob_gt_0.9": 30.81,
+  "rise_m": [
+    6.5,
+    8.0,
+    9.5
+  ],
+  "note": "вероятность затопления по рельефу (HAND), не учитывает дамбы и насыпи мельче разрешения DEM",
+  "settlements_at_risk": [
+    {
+      "name": "Тепличное",
+      "place": "village",
+      "flood_prob": 1.0
+    },
+    {
+      "name": "Заречный",
+      "place": "suburb",
+      "flood_prob": 1.0
+    }
+  ]
+}

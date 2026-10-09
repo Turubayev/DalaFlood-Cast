@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DalaFlood-Cast — сезонный риск паводка</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --ink:#1d2433; --muted:#667085; --line:#e4e7ec; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:#f6f7f9; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:12px 16px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  h1 { font-size:18px; margin:0 8px 0 0; }
+  select { font:inherit; padding:5px 8px; border:1px solid var(--line); border-radius:6px; }
+  .warn { background:#fff4e5; border-left:4px solid #f79009; padding:8px 12px; font-size:13px; margin:12px 16px; border-radius:4px; }
+  main { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); gap:14px; padding:0 16px 16px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  #map { height:560px; border-radius:10px; border:1px solid var(--line); }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; max-height:560px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { padding:4px 6px; border-bottom:1px solid var(--line); text-align:left; }
+  .legend span { display:inline-block; width:12px; height:12px; border-radius:50%; margin:0 4px 0 10px; vertical-align:-1px; }
+  .muted { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌊 DalaFlood-Cast</h1>
+  <label>Зима <select id="season"></select></label>
+  <span class="legend muted"><span style="background:#12b76a"></span>низкий<span style="background:#fdb022"></span>умеренный<span style="background:#f97066"></span>высокий<span style="background:#b42318"></span>очень высокий</span>
+</header>
+<div class="warn">Инструмент поддержки решений, не официальная система оповещения. Официальные предупреждения о ЧС выпускают МЧС РК и РГП «Казгидромет».</div>
+<main>
+  <div id="map"></div>
+  <div class="card"><b>Районы по индексу риска</b><table id="tbl"></table>
+    <p class="muted">Индекс — взвешенная сумма отклонений (z-оценок) запаса воды в снеге, осенней влажности почвы, глубины промерзания и снегопадов от климата района. Данные: ERA5-Land / ERA5 (Copernicus).</p></div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const COL = {"низкий":"#12b76a","умеренный":"#fdb022","высокий":"#f97066","очень высокий":"#b42318"};
+const map = L.map('map').setView([52.0, 66.0], 5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'© OpenStreetMap'}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+let DATA = {};
+fetch('data/seasonal.json').then(r => r.json()).then(js => {
+  DATA = js;
+  const seasons = Object.keys(js).filter(k => !k.startsWith('_')).sort().reverse();
+  document.getElementById('season').innerHTML = seasons.map(s => `<option>${s}</option>`).join('');
+  draw(seasons[0]);
+}).catch(() => { document.getElementById('tbl').innerHTML = '<tr><td>Нет data/seasonal.json — запустите scripts/seasonal_risk.py</td></tr>'; });
+document.getElementById('season').onchange = e => draw(e.target.value);
+
+function draw(season) {
+  layer.clearLayers();
+  const rows = Object.entries(DATA[season]).flatMap(([basin, list]) => list.map(r => ({...r, basin})));
+  rows.sort((a, b) => b.score - a.score);
+  rows.forEach(r => {
+    L.circleMarker([r.lat, r.lon], {radius: 7 + Math.max(0, r.score) * 4, color:'#111', weight:1, fillColor:COL[r.category], fillOpacity:0.9})
+      .bindPopup(`<b>${r.district}</b><br>${r.region}<br>Индекс <b>${r.score > 0 ? '+' : ''}${r.score.toFixed(2)}</b> — ${r.category}<br>
+        Запас воды в снеге: ${r.swe_mm.toFixed(0)} мм (z ${r.z_swe_mm})<br>
+        Влажность почвы осенью: ${r.autumn_sm.toFixed(3)} (z ${r.z_autumn_sm})<br>
+        Промерзание: ${r.frost_cm.toFixed(0)} см (z ${r.z_frost_cm})<br>
+        ${r.combination_2024_like ? '<b>Сочетание факторов как в 2024 г.</b>' : ''}`)
+      .addTo(layer);
+  });
+  document.getElementById('tbl').innerHTML = '<tr><th>Район</th><th>Индекс</th><th>Категория</th></tr>' + rows.map(r =>
+    `<tr><td>${r.district}<div class="muted">${r.region}</div></td><td>${r.score > 0 ? '+' : ''}${r.score.toFixed(2)}</td>
+     <td><span style="color:${COL[r.category]}">●</span> ${r.category}${r.combination_2024_like ? ' ⚠' : ''}</td></tr>`).join('');
+}
+</script>
+</body>
+</html>
