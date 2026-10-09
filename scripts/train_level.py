@@ -52,7 +52,11 @@ def main():
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--hbv-iter", type=int, default=60)
     ap.add_argument("--calib-from", default="2018-01-01", help="годы для конформной калибровки интервала (до --test-from)")
+    ap.add_argument('--weather-archive', help='CSV issued weather: issue_time,issued_at,valid_time,temperature_2m_mean,precipitation_sum')
     a = ap.parse_args()
+    if not pd.Timestamp(a.start) < pd.Timestamp(a.calib_from) < pd.Timestamp(a.test_from) <= pd.Timestamp(a.end):
+        ap.error('Expected start < calib-from < test-from <= end')
+    archive = pd.read_csv(a.weather_archive) if a.weather_archive else None
 
     basin, g = find_gauge(a.gauge)
     lat, lon, qmean = openmeteo.snap_to_river(g.lat, g.lon)
@@ -63,7 +67,8 @@ def main():
         q = obs["q"].astype(float)
         source = "наблюдения поста"
         if "h" in obs:
-            rating = fit_rating_curve(obs["q"], obs["h"])
+            rating_train = obs.loc[obs.index < pd.Timestamp(a.calib_from)]
+            rating = fit_rating_curve(rating_train["q"], rating_train["h"])
     else:
         q = openmeteo.glofas_discharge(lat, lon, a.start, a.end)
         source = "реанализ GloFAS v4"
@@ -79,10 +84,10 @@ def main():
     pet = hbv.hargreaves_pet(met["temperature_2m_mean"], met["temperature_2m_max"], met["temperature_2m_min"], doy, g.lat)
     frost = np.clip(-met["soil_temperature_7_to_28cm_mean"].to_numpy() / 3.0, 0, 1)
     P, T = met["precipitation_sum"].fillna(0).to_numpy(), met["temperature_2m_mean"].to_numpy()
-    cal = met.index < pd.Timestamp(a.test_from)
+    cal = met.index < pd.Timestamp(a.calib_from)
     params, kge_cal = hbv.calibrate(P[cal], T[cal], pet[cal], frost[cal], q[cal].to_numpy(), maxiter=a.hbv_iter)
     q_hbv = pd.Series(hbv.simulate(params, P, T, pet, frost), index=met.index)
-    test = ~cal
+    test = met.index >= pd.Timestamp(a.test_from)
     res = {"gauge": g.id, "target": source, "glofas_cell": [lat, lon], "test_from": a.test_from,
            "hbv": {"kge_calibration": round(kge_cal, 3), "nse_test": round(hbv.nse(q[test], q_hbv[test]), 3),
                    "kge_test": round(hbv.kge(q[test], q_hbv[test]), 3)}}
@@ -96,9 +101,13 @@ def main():
     tr_idx = idx_all[idx_all < n_cal - 3]
     cal_idx = idx_all[(idx_all >= n_cal) & (idx_all < n_tr - 3)]
     te_idx = idx_all[idx_all >= n_tr]
-    Htr, Ftr, Ytr, _ = make_windows(df, tr_idx, seed=1)
-    Hca, Fca, Yca, _ = make_windows(df, cal_idx, seed=3)
-    Hte, Fte, Yte, Ite = make_windows(df, te_idx, seed=2)
+    Htr, Ftr, Ytr, _ = make_windows(df, tr_idx, seed=1, forecast_archive=archive)
+    Hca, Fca, Yca, _ = make_windows(df, cal_idx, seed=3, forecast_archive=archive)
+    Hte, Fte, Yte, Ite = make_windows(df, te_idx, seed=2, forecast_archive=archive)
+    res['weather_mode'] = 'issued_forecast_archive' if archive is not None else 'reanalysis_plus_noise_research_only'
+    res['training_end'] = a.calib_from
+    res['calibration_end'] = a.test_from
+    res['split_purge_days'] = 3
     model = LevelLSTM().fit(Htr, Ftr, Ytr, epochs=a.epochs, verbose=True)
     print("Конформная поправка интервала (log), сутки 1–3:", np.round(model.conformalize(Hca, Fca, Yca), 3), flush=True)
     pred = model.predict(Hte, Fte)  # (B, 3, 3)
@@ -120,6 +129,8 @@ def main():
     model.save(md / f"level_{g.id}.pt")
     (md / f"hbv_{g.id}.json").write_text(json.dumps(hbv.params_dict(params), indent=2), encoding="utf-8")
     (md / f"gauge_{g.id}.json").write_text(json.dumps({"glofas_cell": [lat, lon], "rating": rating, "source": source,
+                                                       "training_revision":2,"weather_mode":res['weather_mode'],"operational_validation":False,
+                                                       "rating_fitted_from_observations": bool(a.obs and 'h' in obs),
                                                        "points": [(g.lat, g.lon)] + [(d.lat, d.lon) for d in pts]},
                                                       ensure_ascii=False, indent=2), encoding="utf-8")
     out = ROOT / "results"

@@ -44,16 +44,19 @@ def recent_met(points) -> pd.DataFrame:
         df = pd.concat([arch, fc[~fc.index.isin(arch.index)]]).sort_index()
         frames.append(df)
     out = sum(f.reindex(frames[0].index) for f in frames) / len(frames)
-    return out.interpolate(limit_direction="both")
+    return out.ffill(limit=5)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gauge", default="esil_petropavl")
+    ap.add_argument('--allow-legacy-research-model',action='store_true',help='explicitly run pre-revision-2 checkpoints as unvalidated research')
     a = ap.parse_args()
     _, g = find_gauge(a.gauge)
     md = ROOT / "models"
     meta = json.loads((md / f"gauge_{g.id}.json").read_text(encoding="utf-8"))
+    if meta.get('training_revision',1)<2 and not a.allow_legacy_research_model:
+        ap.error('Retrain with train_level.py: bundled legacy models predate leakage fixes. For research reproduction only use --allow-legacy-research-model.')
     params = hbv.HBVParams(**json.loads((md / f"hbv_{g.id}.json").read_text(encoding="utf-8")))
     model = LevelLSTM.load(md / f"level_{g.id}.pt")
     lat, lon = meta["glofas_cell"]
@@ -69,9 +72,9 @@ def main():
     frost = np.clip(-met["soil_temperature_7_to_28cm_mean"].fillna(0).to_numpy() / 3.0, 0, 1)
     q_hbv = pd.Series(hbv.simulate(params, met["precipitation_sum"].fillna(0).to_numpy(),
                                    met["temperature_2m_mean"].to_numpy(), pet, frost), index=met.index)
-    df = build_frame(q.ffill(), met, q_hbv)
+    df = build_frame(q, met, q_hbv)
     i_last = int(np.searchsorted(df.index, today)) - 1  # последний день с известным расходом
-    H, F, _, _ = make_windows(df, np.array([i_last]), noise=False)
+    H, F, _, _ = make_windows(df, np.array([i_last]), noise=False, require_targets=False)
     pred = model.predict(H, F)[0]  # (3, 3)
     days = [df.index[i_last] + pd.Timedelta(days=k + 1) for k in range(LEAD_DAYS)]
     rows = []
@@ -84,7 +87,8 @@ def main():
                      "glofas_max": round(float(gl["river_discharge_max"].get(d, np.nan)), 1)})
     out = {"gauge": g.name, "issued": str(df.index[i_last].date()), "last_q": round(float(df["q"].iloc[i_last]), 1),
            "forecast": rows, "disclaimer": DISCLAIMER,
-           "note": "уровень по кривой расходов-заглушке, пока не подобрана по данным поста (--obs в train_level.py)"}
+           "operational_validation":False,"training_revision":meta.get('training_revision',1),
+           "note": "уровень по наблюденной кривой расходов" if meta.get('rating_fitted_from_observations') else "уровень по кривой расходов-заглушке; требуется подбор по данным поста"}
     print(json.dumps(out, ensure_ascii=False, indent=1))
     (ROOT / "results").mkdir(exist_ok=True)
     (ROOT / "results" / f"forecast_{g.id}.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")

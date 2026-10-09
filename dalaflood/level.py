@@ -31,27 +31,58 @@ def build_frame(q: pd.Series, met: pd.DataFrame, q_hbv: pd.Series | None = None)
     df["q"] = q
     df["logq"] = np.log1p(q.clip(lower=0))
     df["temp"] = met["temperature_2m_mean"].reindex(df.index) / 10
-    df["precip"] = np.log1p(met["precipitation_sum"].reindex(df.index).fillna(0))
-    df["snow"] = met["snow_depth_max"].reindex(df.index).fillna(0) * 3
+    df["precip"] = np.log1p(met["precipitation_sum"].reindex(df.index).clip(lower=0))
+    df["snow"] = met["snow_depth_max"].reindex(df.index) * 3
     df["soil_t"] = met["soil_temperature_7_to_28cm_mean"].reindex(df.index) / 5
     df["logq_hbv"] = np.log1p(q_hbv.reindex(df.index).clip(lower=0)) if q_hbv is not None else df["logq"].shift(1)
-    return df.interpolate(limit=5).bfill().ffill()
+    # Causal input filling only; never invent observations used as targets.
+    df[HIST_COLS] = df[HIST_COLS].ffill(limit=5)
+    df['target_logq'] = np.log1p(q.where(q >= 0))
+    return df
 
 
-def make_windows(df: pd.DataFrame, idx: np.ndarray | None = None, noise: bool = True, seed: int = 0):
+def make_windows(df: pd.DataFrame, idx: np.ndarray | None = None, noise: bool = True, seed: int = 0,
+                 forecast_archive: pd.DataFrame | None = None, require_targets: bool = True):
     rng = np.random.default_rng(seed)
     n = len(df)
     I = np.arange(HIST_DAYS - 1, n - LEAD_DAYS) if idx is None else idx
+    I = np.asarray(I, int)
+    I = I[(I >= HIST_DAYS - 1) & (I + LEAD_DAYS < n)]
+    if not len(I): raise ValueError('No complete history/forecast windows')
     H = df[HIST_COLS].to_numpy(np.float32)
     F = df[FUT_COLS].to_numpy(np.float32)
     hist = np.stack([H[i - HIST_DAYS + 1 : i + 1] for i in I])
     fut = np.stack([F[i + 1 : i + 1 + LEAD_DAYS] for i in I]).copy()
-    if noise:
+    if forecast_archive is not None:
+        fut = archived_weather(df.index[I], forecast_archive)
+    elif noise:
         lead = np.arange(1, LEAD_DAYS + 1)[None, :]
         fut[..., 0] += rng.normal(0, 0.1 + 0.05 * lead)  # температура (×10 °C)
         fut[..., 1] *= np.exp(rng.normal(0, 0.25 + 0.1 * lead))  # осадки
-    y = np.stack([df["logq"].to_numpy(np.float32)[i + 1 : i + 1 + LEAD_DAYS] for i in I])
-    return hist.astype(np.float32), fut.astype(np.float32), y.astype(np.float32), I
+    targets = df['target_logq'] if 'target_logq' in df else df['logq']
+    y = np.stack([targets.to_numpy(np.float32)[i + 1 : i + 1 + LEAD_DAYS] for i in I])
+    ok = np.isfinite(hist).all(axis=(1,2)) & np.isfinite(fut).all(axis=(1,2))
+    if require_targets: ok &= np.isfinite(y).all(axis=1)
+    if not ok.any(): raise ValueError('No finite windows; missing data must be resolved before training/forecasting')
+    return hist[ok].astype(np.float32), fut[ok].astype(np.float32), y[ok].astype(np.float32), I[ok]
+
+
+def archived_weather(issues, frame):
+    d = frame.copy()
+    cols = ['issue_time','issued_at','valid_time','temperature_2m_mean','precipitation_sum']
+    if not set(cols) <= set(d): raise ValueError('Incomplete weather forecast archive')
+    for c in cols[:3]: d[c] = pd.to_datetime(d[c])
+    if d[cols[:3]].isna().any().any() or (d.issued_at > d.issue_time).any() or (d.valid_time <= d.issue_time).any():
+        raise ValueError('Invalid forecast publication/valid time')
+    if d.duplicated(['issue_time','valid_time']).any(): raise ValueError('Duplicate weather forecasts')
+    vals = d[cols[3:]].to_numpy(float)
+    if not np.isfinite(vals).all() or (vals[:,1]<0).any(): raise ValueError('Invalid forecast weather')
+    d = d.set_index(['issue_time','valid_time'])
+    keys = [(t,t+pd.Timedelta(days=h)) for t in issues for h in range(1,LEAD_DAYS+1)]
+    vals = d.reindex(pd.MultiIndex.from_tuples(keys,names=d.index.names))[cols[3:]].to_numpy(float, copy=True)
+    if not np.isfinite(vals).all(): raise ValueError('Forecast archive does not cover all requested issue times/leads')
+    vals[:,0] /= 10; vals[:,1] = np.log1p(vals[:,1])
+    return vals.reshape(len(issues),LEAD_DAYS,2).astype(np.float32)
 
 
 class LevelLSTM:
@@ -119,8 +150,10 @@ class LevelLSTM:
         p = self._raw(hist, fut)
         score = np.maximum(p[..., 0] - y, y - p[..., 2])  # (B, 3)
         n = len(score)
+        if not n or not np.isfinite(score).all() or not 0 < coverage < 1:
+            raise ValueError('Finite nonempty calibration and coverage in (0,1) required')
         level = min(1.0, np.ceil((n + 1) * coverage) / n)
-        self.margin = np.quantile(score, level, axis=0).astype(np.float32)
+        self.margin = np.maximum(0, np.quantile(score, level, axis=0, method='higher')).astype(np.float32)
         return self.margin
 
     def predict(self, hist, fut) -> np.ndarray:
@@ -166,7 +199,9 @@ def fit_rating_curve(q, h) -> tuple[float, float, float]:
 
     q, h = np.asarray(q, float), np.asarray(h, float)
     ok = np.isfinite(q) & np.isfinite(h) & (q > 0)
-    popt, _ = curve_fit(lambda x, h0, a, b: h0 + a * x**b, q[ok], h[ok], p0=(h[ok].min(), 0.3, 0.5), maxfev=20000)
+    if ok.sum() < 5 or np.unique(q[ok]).size < 5: raise ValueError('Need at least 5 distinct positive discharge/level pairs')
+    popt, _ = curve_fit(lambda x, h0, a, b: h0 + a * x**b, q[ok], h[ok], p0=(h[ok].min(), 0.3, 0.5),
+                        bounds=([-np.inf, 1e-9, .05], [np.inf, np.inf, 2.0]), maxfev=20000)
     return tuple(float(v) for v in popt)
 
 
